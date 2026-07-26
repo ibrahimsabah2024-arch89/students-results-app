@@ -175,13 +175,24 @@ def decode_pdf_lines(pdf_path: str, gid_to_unicode: dict, arabic_font_prefix: st
             page = pdf.pages[pi]
             chars = sorted(page.chars, key=lambda c: (c["top"], c["x0"]))
 
-            # cluster into lines by tolerance on vertical position, robust
+            # Cluster into lines by tolerance on vertical position, robust
             # to sub-point baseline jitter between characters on the same
-            # visual row
+            # visual row.
+            #
+            # PERFORMANCE NOTE: chars are already sorted by ascending
+            # `top`, so once we move past a row we never need to revisit
+            # it -- a new row's top is always >= every previous row's top
+            # (up to jitter). The naive version compared every char
+            # against *every* existing cluster on the page (O(chars *
+            # rows) per page), which got very slow on pages with many
+            # rows (e.g. dense admission-list tables). Checking only the
+            # last handful of clusters is enough to absorb jitter and
+            # turns this into an O(chars) scan instead.
             clusters = []
+            RECENT_WINDOW = 4
             for c in chars:
                 placed = False
-                for cluster in clusters:
+                for cluster in clusters[-RECENT_WINDOW:]:
                     if abs(cluster["top"] - c["top"]) <= 2.0:
                         cluster["chars"].append(c)
                         placed = True
