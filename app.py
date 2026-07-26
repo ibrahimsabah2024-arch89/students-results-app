@@ -1,39 +1,3 @@
-"""
-Streamlit app: أداة قراءة وتحليل ملفات نتائج الطلبة (PDF)
-------------------------------------------------------
-- يدعم ملفات PDF التي تستخدم ترميز خط عربي غير قياسي (شائع في بعض تصدير
-  نتائج وزارة التربية العراقية)، حيث يقوم بفك الترميز تلقائيًا لكل ملف
-  يُرفع (لأن كل ملف قد يحمل خريطة ترميز مختلفة حتى لو تشابه اسم الخط).
-- تبويب "البحث عن طالب": يبحث عن اسم/كلمة داخل كل صفحات الملف.
-- تبويب "إحصائيات المعدلات": مخصص لملفات قوائم المعدلات (ت / المعدل
-  الأصلي / درجة اللغات / الإضافة / المعدل بعد الإضافة)، ويتيح إضافة درجة
-  إلى أي عمود، عرض الأعداد حسب الفئة، وحساب أدنى معدل ضمن أعلى N طالب.
-"""
-
-import io
-import tempfile
-
-import pandas as pd
-import streamlit as st
-
-from font_decoder import build_cid_to_unicode_map, decode_pdf_lines, normalize_for_search
-from parser_averages import parse_average_rows
-from parser_medicine import parse_admission_rows, medicine_admission_counts
-
-st.set_page_config(page_title="تحليل نتائج الطلبة", layout="wide", page_icon="📊")
-
-st.markdown(
-    """
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;900&display=swap" rel="stylesheet">
-    <style>
-    html, body, [class*="css"] { font-family: 'Tajawal', sans-serif !important; }
-    .stApp { direction: rtl; text-align: right; }
-    div[data-testid="stMetricValue"] { direction: ltr; }
-
-    /* hero banner */
-    .app-hero {
         background: linear-gradient(120deg, #1f6feb 0%, #6a4bd6 100%);
         border-radius: 18px;
         padding: 28px 32px;
