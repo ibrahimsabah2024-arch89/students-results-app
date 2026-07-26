@@ -14,7 +14,7 @@ from typing import List, Optional
 
 from font_decoder import DecodedLine
 
-EXAM_ID_RE = re.compile(r"\b\d{10,13}\b")
+EXAM_ID_RE = re.compile(r"(?<!\d)\d{9,17}(?!\d)")
 SCORE_PREFIX_RE = re.compile(r"^\d+(?:\.\d+)?")
 
 BRANCH_WORDS = ("علمي", "احيائي", "أحيائي", "ادبي", "أدبي", "تطبيقي")
