@@ -18,6 +18,7 @@ import streamlit as st
 
 from font_decoder import build_cid_to_unicode_map, decode_pdf_lines, normalize_for_search
 from parser_averages import parse_average_rows
+from parser_medicine import parse_admission_rows, medicine_admission_counts
 
 st.set_page_config(page_title="تحليل نتائج الطلبة", layout="wide", page_icon="📊")
 
@@ -85,7 +86,9 @@ if not decoded_ok:
         "(الملف على الأرجح لا يعاني من مشكلة الترميز)."
     )
 
-tab_search, tab_stats = st.tabs(["🔍 البحث عن طالب", "📈 إحصائيات المعدلات"])
+tab_search, tab_stats, tab_medicine = st.tabs(
+    ["🔍 البحث عن طالب", "📈 إحصائيات المعدلات", "🩺 كليات الطب"]
+)
 
 # ----------------------------------------------------------------------
 # TAB 1: Search
@@ -195,3 +198,37 @@ with tab_stats:
             file_name="نتائج_الطلبة.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
+
+# ----------------------------------------------------------------------
+# TAB 3: Medicine colleges admission counts
+# ----------------------------------------------------------------------
+with tab_medicine:
+    st.subheader("عدد الطلبة المقبولين في كليات الطب (حسب كل جامعة)")
+    st.caption(
+        "مخصص لملفات القبول المركزي (كل سطر فيه اسم الطالب + الرقم الامتحاني + "
+        "الجامعة/الكلية المقبول فيها). يُستبعد طب الأسنان والطب البيطري تلقائيًا "
+        "(الكلية البشرية فقط)، وتُدمج قنوات القبول المحلي (أبناء المحافظة) مع "
+        "القبول العام لنفس الكلية في صف واحد."
+    )
+
+    admission_rows = parse_admission_rows(lines)
+    st.write(f"عدد صفوف الطلبة التي تم التعرف عليها في الملف: **{len(admission_rows)}**")
+
+    if not admission_rows:
+        st.warning("لم يتم العثور على صفوف قبول بهذا التنسيق في الملف المرفوع.")
+    else:
+        med_df = medicine_admission_counts(admission_rows)
+        if med_df.empty:
+            st.info("لم يتم العثور على أي كلية طب (بشري) ضمن هذا الملف.")
+        else:
+            st.dataframe(med_df, use_container_width=True, height=min(700, 40 * len(med_df) + 40))
+
+            med_buf = io.BytesIO()
+            with pd.ExcelWriter(med_buf, engine="openpyxl") as writer:
+                med_df.to_excel(writer, sheet_name="كليات الطب", index=False)
+            st.download_button(
+                "⬇️ تنزيل جدول كليات الطب كملف Excel",
+                data=med_buf.getvalue(),
+                file_name="كليات_الطب.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
