@@ -24,24 +24,79 @@ st.set_page_config(page_title="تحليل نتائج الطلبة", layout="wide
 
 st.markdown(
     """
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;900&display=swap" rel="stylesheet">
     <style>
+    html, body, [class*="css"] { font-family: 'Tajawal', sans-serif !important; }
     .stApp { direction: rtl; text-align: right; }
     div[data-testid="stMetricValue"] { direction: ltr; }
+
+    /* hero banner */
+    .app-hero {
+        background: linear-gradient(120deg, #1f6feb 0%, #6a4bd6 100%);
+        border-radius: 18px;
+        padding: 28px 32px;
+        margin-bottom: 22px;
+        color: #ffffff;
+        box-shadow: 0 8px 24px rgba(31, 111, 235, 0.25);
+    }
+    .app-hero h1 { margin: 0 0 6px 0; font-size: 1.9rem; font-weight: 900; }
+    .app-hero p { margin: 0; opacity: 0.92; font-size: 1.02rem; }
+
+    /* card-style metrics */
+    div[data-testid="stMetric"] {
+        background: rgba(31, 111, 235, 0.07);
+        border: 1px solid rgba(31, 111, 235, 0.18);
+        border-radius: 14px;
+        padding: 14px 16px;
+    }
+
+    /* tabs look */
+    .stTabs [data-baseweb="tab-list"] { gap: 6px; }
+    .stTabs [data-baseweb="tab"] {
+        border-radius: 10px 10px 0 0;
+        padding: 10px 18px;
+        font-weight: 700;
+    }
+
+    /* nicer dataframes: right-align Arabic text */
+    div[data-testid="stDataFrame"] * { text-align: right !important; }
+
+    /* download / primary buttons */
+    .stDownloadButton button, .stButton button {
+        border-radius: 10px;
+        font-weight: 700;
+    }
+
+    hr, div[data-testid="stDivider"] { opacity: 0.35; }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-st.title("📊 أداة تحليل ملفات نتائج الطلبة (PDF)")
-st.caption(
-    "ارفع ملف PDF لنتائج الطلبة (حتى لو كان بترميز خط غير قابل للنسخ مباشرة)، "
-    "وسيتم فك تشفيره تلقائيًا."
+st.markdown(
+    """
+    <div class="app-hero">
+        <h1>📊 أداة تحليل ملفات نتائج الطلبة</h1>
+        <p>ارفع ملف PDF لنتائج الطلبة (حتى لو كان بترميز خط غير قابل للنسخ مباشرة) —
+        وسيتم فك تشفيره وتحليله تلقائيًا: بحث بالاسم، إحصائيات المعدلات، وعدد
+        المقبولين في كليات الطب حسب كل جامعة.</p>
+    </div>
+    """,
+    unsafe_allow_html=True,
 )
 
 
 @st.cache_data(show_spinner=False)
-def _process_pdf(file_bytes: bytes):
-    """Cache heavy work per uploaded file (by content hash)."""
+def _process_pdf(file_bytes: bytes, _progress_cb=None):
+    """Cache heavy work per uploaded file (by content hash).
+
+    `_progress_cb` (leading underscore) is excluded from the cache key by
+    Streamlit's convention -- it's only used to report progress on a
+    cache *miss* (first time this exact file is uploaded); repeat runs on
+    the same file are served straight from cache with no re-processing.
+    """
     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
         tmp.write(file_bytes)
         tmp_path = tmp.name
@@ -50,7 +105,7 @@ def _process_pdf(file_bytes: bytes):
 
     if gid_map:
         prefix = font_name.lstrip("/").split("+")[0] if font_name else ""
-        lines = decode_pdf_lines(tmp_path, gid_map, prefix)
+        lines = decode_pdf_lines(tmp_path, gid_map, prefix, progress_callback=_progress_cb)
         decoded_ok = True
     else:
         # No broken CID font detected -- fall back to plain extraction
@@ -60,13 +115,31 @@ def _process_pdf(file_bytes: bytes):
 
         lines = []
         with pdfplumber.open(tmp_path) as pdf:
+            total = len(pdf.pages)
             for pi, page in enumerate(pdf.pages):
                 text = page.extract_text() or ""
                 for row_i, row_text in enumerate(text.split("\n")):
                     lines.append(DecodedLine(page=pi + 1, top=float(row_i), text=row_text))
+                if _progress_cb:
+                    _progress_cb(pi + 1, total)
         decoded_ok = False
 
     return lines, decoded_ok, font_name
+
+
+@st.cache_data(show_spinner=False)
+def _cached_average_rows(file_bytes: bytes, _lines):
+    """Cache the parsed averages-table rows too, so moving a slider in
+    the stats tab doesn't re-scan tens of thousands of lines on every
+    single rerun -- only the (cheap) arithmetic on the cached DataFrame
+    re-runs."""
+    return parse_average_rows(_lines)
+
+
+@st.cache_data(show_spinner=False)
+def _cached_admission_rows(file_bytes: bytes, _lines):
+    """Same idea as above, for the Medicine-colleges admission parser."""
+    return parse_admission_rows(_lines)
 
 
 uploaded = st.file_uploader("ارفع ملف PDF", type=["pdf"])
@@ -75,11 +148,22 @@ if not uploaded:
     st.info("👆 ارفع ملفًا للبدء.")
     st.stop()
 
-with st.spinner("جاري فك تشفير الملف وقراءة كل الصفحات... قد يستغرق هذا دقيقة لملفات كبيرة."):
-    lines, decoded_ok, font_name = _process_pdf(uploaded.getvalue())
+file_bytes = uploaded.getvalue()
+
+progress_placeholder = st.empty()
+status_placeholder = st.empty()
+
+
+def _report_progress(done: int, total: int):
+    pct = done / total if total else 0
+    progress_placeholder.progress(pct, text=f"جاري تحليل الصفحة {done} من {total}...")
+
+
+lines, decoded_ok, font_name = _process_pdf(file_bytes, _progress_cb=_report_progress)
+progress_placeholder.empty()
 
 n_pages = max((l.page for l in lines), default=0)
-st.success(f"تم تحليل {n_pages} صفحة، {len(lines)} سطرًا نصيًا.")
+status_placeholder.success(f"✅ تم تحليل {n_pages} صفحة، {len(lines):,} سطرًا نصيًا.")
 if not decoded_ok:
     st.warning(
         "لم أجد خط CID مخصص يحتاج فك تشفير -- تم استخدام الاستخراج المباشر للنص "
@@ -118,7 +202,7 @@ with tab_stats:
         "درجة اللغات، الإضافة، المعدل بعد الإضافة) بدون أسماء."
     )
 
-    rows = parse_average_rows(lines)
+    rows = _cached_average_rows(file_bytes, lines)
     if not rows:
         st.warning("لم يتم العثور على صفوف بهذا التنسيق في الملف المرفوع.")
     else:
@@ -211,7 +295,7 @@ with tab_medicine:
         "القبول العام لنفس الكلية في صف واحد."
     )
 
-    admission_rows = parse_admission_rows(lines)
+    admission_rows = _cached_admission_rows(file_bytes, lines)
     st.write(f"عدد صفوف الطلبة التي تم التعرف عليها في الملف: **{len(admission_rows)}**")
 
     if not admission_rows:
